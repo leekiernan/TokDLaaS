@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -51,21 +53,54 @@ func main() {
 			return
 		}
 
-		if metadata.Data.Play == "" {
-			http.Error(w, "No video URL found", http.StatusNotFound)
+		if len(metadata.Data.Images) > 0 {
+			logger.Info("Detected Gallery", "count", len(metadata.Data.Images))
+
+			w.Header().Set("Content-Type", "application/zip")
+			w.Header().Set("Content-Disposition", "attachment; filename=\"gallery.zip\"")
+			w.Header().Set("Transfer-Encoding", "chunked")
+
+			zw := zip.NewWriter(w)
+			for i, imgURL := range metadata.Data.Images {
+				resp, err := http.Get(imgURL)
+				if err != nil {
+					logger.Error("Failed to fetch image", "url", imgURL, "err", err)
+					continue
+				}
+
+				fileName := fmt.Sprintf("image_%d.jpg", i+1)
+				f, err := zw.Create(fileName)
+				if err != nil {
+					logger.Error("Failed to create zip", "f", f, "fileName", fileName)
+					resp.Body.Close()
+					continue
+				}
+
+				_, err = io.Copy(f, resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					logger.Error("Error copying image to zip", "file", fileName, "err", err)
+				}
+			}
+			zw.Close()
 			return
 		}
 
 		resp, err := http.Get(metadata.Data.Play)
 		if err != nil {
-			http.Error(w, "Failed to reach video source", http.StatusBadGateway)
+			http.Error(w, "CDN error", 502)
 			return
 		}
 		defer resp.Body.Close()
 
 		w.Header().Set("Content-Type", "video/mp4")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"video.mp4\"")
+		io.Copy(w, resp.Body)
 
+		if metadata.Data.Play == "" {
+			http.Error(w, "No video URL found", http.StatusNotFound)
+			return
+		}
 		_, err = io.Copy(w, resp.Body)
 		if err != nil {
 			logger.Error("Stream interrupted", "error", err)
