@@ -1,0 +1,5 @@
+.env
+go.mod
+go.sum
+cache/
+.tiktok_cache.db
